@@ -1,0 +1,43 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// BIGSERIAL id is the source for Base62 short-code generation.
+// See src/utils/base62.ts for the encode/decode + obfuscation strategy.
+model Link {
+  id          BigInt   @id @default(autoincrement())
+  code        String   @unique // base62-encoded id, e.g. "b7F9a"
+  longUrl     String   @map("long_url")
+  createdAt   DateTime @default(now()) @map("created_at")
+  expiresAt   DateTime? @map("expires_at")
+  isActive    Boolean  @default(true) @map("is_active")
+  clickCount  Int      @default(0) @map("click_count") // denormalized counter for fast reads
+  ownerIp     String?  @map("owner_ip") // anonymous creator fingerprint (no auth in v1)
+
+  clicks      Click[]
+
+  @@index([createdAt])
+  @@map("links")
+}
+
+// Raw click events. Kept separate from the denormalized counter above so we
+// can do time-series / geo / referrer breakdowns without recomputing from
+// scratch. Written asynchronously by the worker — see src/workers/clickDrainWorker.ts
+model Click {
+  id         BigInt   @id @default(autoincrement())
+  link       Link     @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  linkId     BigInt   @map("link_id")
+  clickedAt  DateTime @default(now()) @map("clicked_at")
+  referrer   String?
+  userAgent  String?  @map("user_agent")
+  country    String?  // resolved from IP if geo lookup is wired up
+  ipHash     String?  @map("ip_hash") // hashed, never store raw IP for click rows
+
+  @@index([linkId, clickedAt])
+  @@map("clicks")
+}
