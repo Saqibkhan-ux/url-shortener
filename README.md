@@ -102,6 +102,78 @@ url-shortener/
     └── components/
 ```
 
+## Deploying (Render + Vercel + managed Postgres/Redis)
+
+This assumes: **Render** for the API (+ Postgres if you want it in one place),
+**Vercel** for the Next.js frontend, and either **Render Postgres** or
+**Neon/Supabase** for the database, plus **Upstash** or **Render Redis** for
+caching/queueing.
+
+### 1. Provision Postgres
+
+- Render Postgres, Neon, or Supabase all work — grab the connection string.
+- Managed Postgres almost always requires SSL. If the string doesn't already
+  include it, append `?sslmode=require`.
+
+### 2. Provision Redis
+
+- Upstash's free tier works well for a portfolio project and gives you a
+  `rediss://` (TLS) URL — use that as-is for `REDIS_URL`.
+- If you use Render Redis instead, same idea: copy the connection string it
+  gives you.
+
+### 3. Deploy the API to Render
+
+- New **Web Service** → connect your repo → root directory `api/`.
+- Render will detect the `Dockerfile` and build it (multi-stage: builds
+  TypeScript, then runs `prisma migrate deploy` before starting the server).
+- Environment variables to set:
+  - `DATABASE_URL` — from step 1
+  - `REDIS_URL` — from step 2
+  - `BASE_URL` — your Render service URL, e.g. `https://tinylink-api.onrender.com`
+  - `CORS_ORIGIN` — your Vercel URL, e.g. `https://tinylink.vercel.app`
+    (add it after step 4, once you know the URL — redeploy or restart after)
+  - `NODE_ENV=production`
+  - `RATE_LIMIT_WINDOW_SECONDS`, `RATE_LIMIT_MAX_REQUESTS` — optional, defaults are fine
+- **Free/starter Render web services spin down on idle.** The live SSE
+  analytics feed will drop when that happens and reconnect on the next
+  request — acceptable for a demo, not for anything real. Upgrade the plan
+  if you need it always-on.
+- **Scaling note:** the background click-drain worker currently runs inside
+  the same process as the API (`startClickDrainWorker()` in `index.ts`).
+  This is fine at a single instance. If you ever scale the API to 2+
+  instances on Render, split the worker into its own Background Worker
+  service pointed at the same `dist/workers/clickDrainWorker.js`, so you
+  don't end up with multiple workers draining the same Redis queue at once.
+
+### 4. Deploy the frontend to Vercel
+
+- Import the repo → set the **root directory to `web/`** (Vercel builds
+  Next.js natively; it ignores `web/Dockerfile`).
+- Environment variable: `NEXT_PUBLIC_API_URL` = your Render API URL from
+  step 3 (e.g. `https://tinylink-api.onrender.com`).
+- Deploy. Then go back to Render and set `CORS_ORIGIN` to this Vercel URL,
+  and restart the API service so it picks up the change.
+
+### 5. Run the first migration
+
+The API Dockerfile's start command already runs `prisma migrate deploy`
+automatically on every deploy, so the `links` and `clicks` tables will exist
+before the server starts accepting requests. No manual step needed — just
+confirm it in the Render deploy logs the first time.
+
+### Before you call it production-ready
+
+This project was built to demonstrate backend system-design patterns for
+interviews, not hardened for public traffic. Worth knowing before you share
+the URL widely:
+
+- **No auth** — anyone can create links (rate-limited only) and view any
+  link's analytics if they know its code.
+- **No error monitoring** — add Sentry or similar if you want visibility
+  into production failures beyond console logs.
+- **Free-tier cold starts** — see the Render note above.
+
 ## API Endpoints
 
 | Method | Path                     | Description                          |

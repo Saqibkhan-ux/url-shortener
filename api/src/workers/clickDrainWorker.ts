@@ -24,16 +24,27 @@ const POLL_INTERVAL_MS = 1000;
  * XACK) instead of a plain LIST + LPOP, so unacknowledged events can be
  * re-claimed by another worker after a crash.
  */
+let drainInterval: NodeJS.Timeout | null = null;
+
 export async function startClickDrainWorker() {
   console.log("[clickDrainWorker] started");
+  if (drainInterval) return;
 
-  setInterval(async () => {
+  drainInterval = setInterval(async () => {
     try {
       await drainBatch();
     } catch (err) {
       console.error("[clickDrainWorker] batch failed:", err);
     }
   }, POLL_INTERVAL_MS);
+}
+
+export function stopClickDrainWorker() {
+  if (drainInterval) {
+    clearInterval(drainInterval);
+    drainInterval = null;
+    console.log("[clickDrainWorker] stopped");
+  }
 }
 
 async function drainBatch() {

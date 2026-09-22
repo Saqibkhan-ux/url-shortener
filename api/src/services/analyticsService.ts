@@ -26,15 +26,13 @@ export async function recordClickAsync(event: ClickEvent) {
   const payload = JSON.stringify({ ...event, ip: undefined, ipHash });
 
   // RPUSH is O(1); this is what keeps the redirect path sub-10ms even
-  // under heavy click volume.
-  await redis.rpush(REDIS_KEYS.clicksQueue, payload);
+  // under heavy click volume. The worker's batch insert into `clicks` (and
+  // its increment of Link.clickCount) is the durable source of truth for
+  // counts — the frontend's "live" number is derived purely from counting
+  // SSE events received since page load, not from a separate Redis counter,
+  // so there's nothing else to keep in sync here.
 
-  // Denormalized counter, incremented optimistically for instant read-back.
-  // The worker's batch insert into `clicks` is the durable source of truth;
-  // this counter is a fast-path approximation that could theoretically drift
-  // if the process crashes between RPUSH and the worker's DB commit —
-  // acceptable for a click counter, would NOT be acceptable for e.g. billing.
-  await redis.incr(`link:clickcount:${event.code}`);
+  await redis.rpush(REDIS_KEYS.clicksQueue, payload);
 
   // Publish for live dashboard subscribers (SSE).
   await redis.publish(REDIS_KEYS.liveChannel(event.code), payload);

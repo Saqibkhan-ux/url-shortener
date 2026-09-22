@@ -27,11 +27,7 @@ end
 return current
 `;
 
-export async function rateLimiter(
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> {
+export async function rateLimiter(req: Request, res: Response, next: NextFunction) {
   const ip = req.ip || req.socket.remoteAddress || "unknown";
   const key = REDIS_KEYS.rateLimit(ip);
 
@@ -49,22 +45,19 @@ export async function rateLimiter(
     if (count > MAX_REQUESTS) {
       const ttl = await redis.ttl(key);
       res.setHeader("Retry-After", ttl > 0 ? ttl : WINDOW_SECONDS);
-      res.status(429).json({
+      return res.status(429).json({
         error: "Too many requests",
         retryAfterSeconds: ttl > 0 ? ttl : WINDOW_SECONDS,
       });
-      return;
     }
 
-    next();
-    return;
+    return next();
   } catch (err) {
     // Fail open: if Redis is down, don't block legitimate traffic on the
     // rate limiter itself. Log so it's visible in observability, but let
     // the request through. Discuss trade-off: fail-open vs fail-closed
     // depending on whether abuse-prevention or availability matters more.
     console.error("[rateLimiter] Redis error, failing open:", err);
-    next();
-    return;
+    return next();
   }
 }

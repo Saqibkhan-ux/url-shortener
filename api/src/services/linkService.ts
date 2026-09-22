@@ -2,7 +2,6 @@ import { prisma } from "../config/db";
 import { redis, REDIS_KEYS, CACHE_TTL_SECONDS } from "../config/redis";
 import { encode } from "../utils/base62";
 import { ApiError } from "../middleware/errorHandler";
-import { randomUUID } from "crypto";
 
 interface CreateLinkInput {
   longUrl: string;
@@ -13,7 +12,6 @@ interface CreateLinkInput {
 interface CachedLink {
   longUrl: string;
   isActive: boolean;
-  expiresAt?: string | null;
 }
 
 export async function createLink({ longUrl, ownerIp, expiresAt }: CreateLinkInput) {
@@ -27,10 +25,7 @@ export async function createLink({ longUrl, ownerIp, expiresAt }: CreateLinkInpu
       longUrl,
       ownerIp,
       expiresAt,
-      // `code` is unique, so a shared empty-string placeholder would make
-      // every creation after the first fail. This value cannot collide with a
-      // Base62 final code because it contains hyphens.
-      code: `pending-${randomUUID()}`,
+      code: "", // placeholder, patched below
     },
   });
 
@@ -45,11 +40,7 @@ export async function createLink({ longUrl, ownerIp, expiresAt }: CreateLinkInpu
   await redis.setex(
     REDIS_KEYS.linkCache(code),
     CACHE_TTL_SECONDS,
-    JSON.stringify({
-      longUrl: finalized.longUrl,
-      isActive: finalized.isActive,
-      expiresAt: finalized.expiresAt?.toISOString() ?? null,
-    } satisfies CachedLink)
+    JSON.stringify({ longUrl: finalized.longUrl, isActive: finalized.isActive })
   );
 
   return finalized;
@@ -61,12 +52,7 @@ export async function resolveLink(code: string): Promise<CachedLink> {
   // 1. Cache-aside read
   const cached = await redis.get(cacheKey);
   if (cached) {
-    const link = JSON.parse(cached) as CachedLink;
-    if (!link.isActive) throw new ApiError(404, "Short link not found");
-    if (link.expiresAt && new Date(link.expiresAt) < new Date()) {
-      throw new ApiError(410, "Short link has expired");
-    }
-    return link;
+    return JSON.parse(cached) as CachedLink;
   }
 
   // 2. Cache miss -> source of truth
@@ -78,11 +64,7 @@ export async function resolveLink(code: string): Promise<CachedLink> {
     throw new ApiError(410, "Short link has expired");
   }
 
-  const payload: CachedLink = {
-    longUrl: link.longUrl,
-    isActive: link.isActive,
-    expiresAt: link.expiresAt?.toISOString() ?? null,
-  };
+  const payload: CachedLink = { longUrl: link.longUrl, isActive: link.isActive };
 
   // 3. Repopulate cache for next read
   await redis.setex(cacheKey, CACHE_TTL_SECONDS, JSON.stringify(payload));

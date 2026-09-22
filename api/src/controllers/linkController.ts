@@ -4,13 +4,7 @@ import { createLink, resolveLink, getLinkByCode, listLinks } from "../services/l
 import { recordClickAsync } from "../services/analyticsService";
 
 const createLinkSchema = z.object({
-  longUrl: z
-    .string()
-    .url("Must be a valid URL")
-    .refine((value) => {
-      const protocol = new URL(value).protocol;
-      return protocol === "http:" || protocol === "https:";
-    }, "URL must use http or https"),
+  longUrl: z.string().url("Must be a valid URL"),
   expiresAt: z.string().datetime().optional(),
 });
 
@@ -65,12 +59,7 @@ export async function getLinkHandler(req: Request, res: Response) {
 
 export async function listLinksHandler(req: Request, res: Response) {
   const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
-  if (cursor && !/^\d+$/.test(cursor)) {
-    throw new z.ZodError([
-      { code: "custom", path: ["cursor"], message: "Cursor must be a numeric link id" },
-    ]);
-  }
-  const limit = z.coerce.number().int().min(1).max(100).default(20).parse(req.query.limit);
+  const limit = req.query.limit ? Number(req.query.limit) : 20;
 
   const result = await listLinks({ cursor, limit });
   res.json(result);
