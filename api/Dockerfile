@@ -13,6 +13,7 @@ RUN npm run build
 
 # ---- production stage ----
 FROM node:20-alpine AS runner
+RUN apk add --no-cache openssl
 WORKDIR /app
 ENV NODE_ENV=production
 
